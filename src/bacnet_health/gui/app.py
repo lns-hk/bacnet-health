@@ -423,6 +423,9 @@ def _install_excepthook(win: MainWindow) -> None:
 def ensure_app(argv: Sequence[str] | None = None) -> QApplication:
     app = QApplication.instance()
     if app is None:
+        if sys.platform == "win32":
+            # The stylesheet is a light theme; stop Windows dark app mode from colouring unstyled parts.
+            os.environ.setdefault("QT_QPA_PLATFORM", "windows:darkmode=0")
         app = QApplication([sys.argv[0] if sys.argv else "bacnet-health", *(argv or [])])
     app.setApplicationName("bacnet-health")
     app.setApplicationDisplayName("bacnet-health")
@@ -433,8 +436,41 @@ def ensure_app(argv: Sequence[str] | None = None) -> QApplication:
         if f.pointSizeF() < 10:
             f.setPointSizeF(10)
         app.setFont(f)
+    try:  # Qt >= 6.8: keep the light palette on macOS/Windows dark mode as well
+        from PySide6.QtCore import Qt as _Qt
+
+        app.styleHints().setColorScheme(_Qt.ColorScheme.Light)
+    except (AttributeError, ImportError):
+        pass
+    app.setWindowIcon(_app_icon())
     app.setStyleSheet(theme.stylesheet())
     return app
+
+
+def _app_icon():
+    """A simple generated icon (pulse line on the accent colour); no third-party artwork."""
+    from PySide6.QtCore import QPointF, Qt as _Qt
+    from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+
+    icon = QIcon()
+    for size in (16, 32, 48, 64, 128, 256):
+        pm = QPixmap(size, size)
+        pm.fill(_Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setBrush(QColor(theme.ACCENT))
+        p.setPen(_Qt.PenStyle.NoPen)
+        p.drawRoundedRect(0, 0, size, size, size * 0.2, size * 0.2)
+        pen = QPen(QColor("white"), max(1.5, size / 14))
+        pen.setCapStyle(_Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(_Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
+        pts = [(0.15, 0.55), (0.35, 0.55), (0.45, 0.3), (0.57, 0.75), (0.67, 0.45), (0.85, 0.45)]
+        for a, b in zip(pts, pts[1:]):
+            p.drawLine(QPointF(a[0] * size, a[1] * size), QPointF(b[0] * size, b[1] * size))
+        p.end()
+        icon.addPixmap(pm)
+    return icon
 
 
 def create_window(runner: Any = None, profile_path: str | None = None, use_real_runner: bool = True) -> MainWindow:

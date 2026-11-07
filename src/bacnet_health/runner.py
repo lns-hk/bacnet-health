@@ -143,10 +143,14 @@ def clock_sync_state() -> tuple[bool | None, str]:
     """Best-effort, no admin: is this computer's clock synchronised automatically?"""
     try:
         if sys.platform == "win32":
-            out = subprocess.run(["w32tm", "/query", "/status"], capture_output=True, text=True, timeout=5).stdout
-            if "Source" in out and "Local CMOS Clock" not in out and "Free-running" not in out:
-                return True, "Windows Time service is synchronising with a time source."
-            return (False, "Windows Time service is not synchronised.") if out else (None, "Unknown.")
+            # '/query /source' prints just the source name, so this works on localised Windows too.
+            r = subprocess.run(["w32tm", "/query", "/source"], capture_output=True, text=True, timeout=5)
+            src = (r.stdout or "").strip()
+            if r.returncode != 0 or not src:
+                return None, "Windows Time service state is unknown (it may be stopped until needed)."
+            if "CMOS" in src or "Free-running" in src or "VM IC" in src:
+                return False, f"Windows Time source is '{src}', not a network time server."
+            return True, f"Windows Time source: {src}."
         if sys.platform.startswith("linux") and shutil.which("timedatectl"):
             out = subprocess.run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"], capture_output=True,
                                  text=True, timeout=5).stdout.strip()

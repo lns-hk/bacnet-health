@@ -207,7 +207,11 @@ def cmd_gui(args: argparse.Namespace) -> int:
     try:
         from bacnet_health.gui.app import main as gui_main
     except ImportError as exc:
-        print(f"The GUI needs PySide6: pip install 'bacnet-health[gui]' ({exc})", file=sys.stderr)
+        if getattr(sys, "frozen", False):
+            print("This is the command-line program. Open bacnet-health.exe (or the app) for the GUI.",
+                  file=sys.stderr)
+        else:
+            print(f"The GUI needs PySide6: pip install 'bacnet-health[gui]' ({exc})", file=sys.stderr)
         return 2
     return gui_main([args.profile] if args.profile else [])
 
