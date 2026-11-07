@@ -18,6 +18,7 @@ from bacnet_health.wire.constants import AbortReason, BvlcFunction, BvlcResult, 
 from bacnet_health.wire.message import BacnetMessage
 
 STANDARD_PORT = 47808
+SOLICITED_WINDOW_S = 5.0  # an I-Am within this time after a matching Who-Is counts as a reply
 WRITE_KINDS = {
     "write-property", "write-property-multiple", "create-object", "delete-object", "atomic-write-file",
     "add-list-element", "remove-list-element", "write-group",
@@ -80,6 +81,7 @@ class PassiveState:
     whois_total: int = 0
     iam_per_sec: Counter = field(default_factory=Counter)
     iam_times: dict[int, list[float]] = field(default_factory=lambda: defaultdict(list))
+    iam_unsolicited: dict[int, list[float]] = field(default_factory=lambda: defaultdict(list))
     devices: dict[tuple, Device] = field(default_factory=dict)  # (instance, address_key) -> Device
     device_ports: dict[int, set[str]] = field(default_factory=lambda: defaultdict(set))  # port -> addresses
     dup_broadcasts: list[dict[str, Any]] = field(default_factory=list)
@@ -111,6 +113,7 @@ class PassiveAnalyzer:
         self.own_addrs = own_addrs or set()
         self.txn_timeout = txn_timeout
         self._recent_bcast: dict[str, list[tuple[float, str, int]]] = {}
+        self._recent_whois: list[tuple[float, int, int]] = []  # (ts, low, high) of recent Who-Is
 
     # ------------------------------------------------------------------ feeding
     def feed(self, udp: UdpDatagram, msg: BacnetMessage, own: bool = False) -> None:
@@ -163,6 +166,9 @@ class PassiveAnalyzer:
             if msg.decoded is None:
                 s.whois_global += 1
                 s.whois_global_sources[udp.src_ip] += 1
+            low, high = msg.decoded if msg.decoded is not None else (0, 4194303)
+            self._recent_whois = [w for w in self._recent_whois if ts - w[0] <= SOLICITED_WINDOW_S]
+            self._recent_whois.append((ts, low, high))
         elif kind == "i-am" and msg.decoded is not None:
             s.iam_per_sec[sec] += 1
             self._iam(udp, msg, ts)
@@ -185,7 +191,9 @@ class PassiveAnalyzer:
         n = msg.npdu
         snet = n.snet if n is not None else None
         sadr = n.sadr.hex() if n is not None and n.sadr else None
-        dev = Device(instance=iam.device_instance, ip=udp.src_ip, port=udp.src_port, snet=snet, sadr=sadr)
+        # A Forwarded-NPDU carries the original sender's address; the UDP source is only the forwarding BBMD.
+        ip, port = msg.bvlc.origin if msg.bvlc is not None and msg.bvlc.origin else (udp.src_ip, udp.src_port)
+        dev = Device(instance=iam.device_instance, ip=ip, port=port, snet=snet, sadr=sadr)
         key = (iam.device_instance, dev.address_key)
         d = s.devices.get(key)
         if d is None:
@@ -199,8 +207,11 @@ class PassiveAnalyzer:
         d.last_seen = ts
         d.iam_count += 1
         s.iam_times[iam.device_instance].append(ts)
+        inst = iam.device_instance
+        if not any(0 <= ts - w_ts <= SOLICITED_WINDOW_S and lo <= inst <= hi for w_ts, lo, hi in self._recent_whois):
+            s.iam_unsolicited[inst].append(ts)
         if snet is None:
-            s.device_ports[udp.src_port].add(f"{udp.src_ip}:{udp.src_port}")
+            s.device_ports[port].add(f"{ip}:{port}")
 
     def _dup_check(self, udp: UdpDatagram, msg: BacnetMessage, ts: float) -> None:
         if msg.bvlc is None or msg.bvlc.npdu is None:
