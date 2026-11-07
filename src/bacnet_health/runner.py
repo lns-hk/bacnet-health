@@ -199,10 +199,13 @@ def preflight(opts: RunnerOptions) -> list[dict[str, str]]:
         try:
             from bacnet_health.active._win import firewall_inbound_status
 
-            fw = firewall_inbound_status(sys.executable, opts.port)
-            status = {"allowed": "ok", "blocked": "error", "unknown": "unknown"}.get(fw.get("status"), "unknown")
+            # The socket owner: the exe when frozen; in a venv the base interpreter (the venv python.exe is a launcher).
+            prog = sys.executable if getattr(sys, "frozen", False) else getattr(sys, "_base_executable", sys.executable)
+            fw = firewall_inbound_status(prog, opts.port)
+            verdict = fw.get("verdict") or fw.get("status")
+            status = {"allowed": "ok", "blocked": "error", "unknown": "unknown"}.get(verdict, "unknown")
             checks.append({"name": "Windows Firewall", "status": status,
-                           "message": fw.get("summary") or "; ".join(fw.get("reasons", [])) or fw.get("status", "")})
+                           "message": fw.get("summary") or "; ".join(fw.get("reasons", [])) or str(verdict or "")})
         except Exception as exc:  # noqa: BLE001
             checks.append({"name": "Windows Firewall", "status": "unknown", "message": f"Could not check: {exc}"})
     synced, why = (opts.clock_synced, "Confirmed by the user.") if opts.clock_synced is not None else clock_sync_state()
