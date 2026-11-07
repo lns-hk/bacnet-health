@@ -46,6 +46,7 @@ class Iface:
     if_index: int | None = None
     mac: str | None = None
     if_type: int | None = None  # Windows IfType, when known
+    host_virtual: str | None = None  # Windows: virtual switch inside this PC (Hyper-V Default Switch, WSL, ...)
 
     @property
     def network(self) -> str:
@@ -70,7 +71,7 @@ class Iface:
 
     def label(self) -> str:
         kind = ("loopback" if self.is_loopback else "Wi-Fi" if self.wireless_guess
-                else "VPN/tunnel" if self.is_tunnel else "wired")
+                else "VPN/tunnel" if self.is_tunnel else "virtual (this PC only)" if self.host_virtual else "wired")
         desc = f" ({self.description})" if self.description else ""
         return f"{self.name}{desc}: {self.ip}/{self.prefix}, {kind}"
 
@@ -137,7 +138,7 @@ def _iface_from_dict(d: dict[str, Any]) -> Iface:
         broadcast=d["broadcast"], is_loopback=bool(d.get("is_loopback")), is_up=bool(d.get("is_up", True)),
         has_default_route=bool(d.get("has_default_route")), wireless_guess=bool(d.get("wireless_guess")),
         description=str(d.get("description") or ""), if_index=d.get("if_index"), mac=d.get("mac"),
-        if_type=d.get("if_type"),
+        if_type=d.get("if_type"), host_virtual=d.get("host_virtual") or None,
     )
 
 
@@ -316,6 +317,9 @@ def _score(i: Iface) -> _Score:
     elif i.is_tunnel:
         s.score -= 40
         s.notes.append("VPN or tunnel interface")
+    elif i.host_virtual:
+        s.score -= 40
+        s.notes.append(f"{i.host_virtual}: not a building network")
     else:
         s.score += 15
         s.notes.append("wired")

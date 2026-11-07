@@ -40,6 +40,7 @@ __all__ = [
     "port_owners",
     "port_owner",
     "firewall_inbound_status",
+    "host_virtual_kind",
 ]
 
 # --- constants -------------------------------------------------------------
@@ -202,6 +203,40 @@ def _sockaddr_ipv4(sa: SOCKET_ADDRESS) -> str | None:
 
 # --- interfaces -------------------------------------------------------------
 
+# Virtual adapters that only reach VMs/containers inside this computer (never a building network). A Hyper-V
+# *external* switch gives the host vNIC the physical NIC's MAC, so a vEthernet adapter with the Hyper-V synthetic
+# OUI 00:15:5d is on an internal/private/NAT switch (Default Switch, WSL, Docker "nat"). VMware VMnet1/VMnet8 and
+# VirtualBox host-only adapters are host-only/NAT by definition (bridged VMs use the physical NIC directly).
+_HYPERV_OUI = "00:15:5d"
+_HOST_VIRTUAL_NAMES = (
+    ("default switch", "Hyper-V Default Switch (NAT inside this computer)"),
+    ("vethernet (wsl", "WSL virtual switch (inside this computer)"),
+    ("vethernet (nat)", "Docker/Hyper-V NAT switch (inside this computer)"),
+)
+_HOST_VIRTUAL_DESCRIPTIONS = (
+    ("vmware virtual ethernet adapter", "VMware host-only/NAT adapter (inside this computer)"),
+    ("virtualbox host-only", "VirtualBox host-only adapter (inside this computer)"),
+)
+
+
+def host_virtual_kind(name: str, description: str, mac: str | None) -> str | None:
+    """Plain-English kind if the adapter is a host-internal virtual switch, else ``None``.
+
+    Pure function (works on every OS); used by the auto-pick heuristic so it never prefers the Hyper-V Default
+    Switch, WSL or VMware/VirtualBox host-only adapters over the real wired LAN (design F5).
+    """
+    n, d = (name or "").lower(), (description or "").lower()
+    for word, kind in _HOST_VIRTUAL_NAMES:
+        if word in n:
+            return kind
+    for word, kind in _HOST_VIRTUAL_DESCRIPTIONS:
+        if d.startswith(word):
+            return kind
+    if d.startswith("hyper-v virtual ethernet adapter") and (mac or "").lower().startswith(_HYPERV_OUI):
+        return "Hyper-V internal/private virtual switch (inside this computer)"
+    return None
+
+
 
 def list_interfaces_windows(include_extra: bool = False) -> list[dict]:
     """Enumerate IPv4 unicast addresses of all adapters via GetAdaptersAddresses.
@@ -219,8 +254,10 @@ def list_interfaces_windows(include_extra: bool = False) -> list[dict]:
     adapters without a hardware address such as tunnels).
 
     With ``include_extra=True`` the dicts also carry ``if_type``,
-    ``ipv4_metric``, ``mtu``, ``link_local`` (169.254/16) and ``adapter_id``
-    (the GUID name), which help the auto-pick heuristic (design F5).
+    ``ipv4_metric``, ``mtu``, ``link_local`` (169.254/16), ``adapter_id``
+    (the GUID name) and ``host_virtual`` (see :func:`host_virtual_kind`; a
+    plain-English kind or ``None``), which help the auto-pick heuristic
+    (design F5).
     """
     _require_windows("list_interfaces_windows")
     lib = _iphlpapi()
@@ -280,6 +317,7 @@ def list_interfaces_windows(include_extra: bool = False) -> list[dict]:
                         mtu=int(a.Mtu),
                         link_local=ipaddress.IPv4Address(ip).is_link_local,
                         adapter_id=(a.AdapterName or b"").decode("ascii", "replace"),
+                        host_virtual=host_virtual_kind(d["name"], d["description"], mac),
                     )
                 out.append(d)
             u = u.contents.Next

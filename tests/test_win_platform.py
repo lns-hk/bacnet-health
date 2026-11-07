@@ -313,3 +313,79 @@ def test_firewall_live_query_is_read_only_and_well_formed() -> None:
     assert r["reasons"], r
     if r["firewall_enabled"] is not None:
         assert r["active_profiles"]
+
+
+# --- host-internal virtual switches (auto-pick, design F5) ------------------
+
+
+@pytest.mark.parametrize(("name", "desc", "mac", "virtual"), [
+    ("vEthernet (Default Switch)", "Hyper-V Virtual Ethernet Adapter", "00:15:5d:04:41:f4", True),
+    ("vEthernet (WSL (Hyper-V firewall))", "Hyper-V Virtual Ethernet Adapter #3", "00:15:5d:aa:bb:cc", True),
+    ("vEthernet (Internal LAB)", "Hyper-V Virtual Ethernet Adapter #4", "00:15:5D:01:02:03", True),
+    ("VMware Network Adapter VMnet8", "VMware Virtual Ethernet Adapter for VMnet8", "00:50:56:c0:00:08", True),
+    ("Ethernet 3", "VirtualBox Host-Only Ethernet Adapter", "0a:00:27:00:00:0c", True),
+    # A Hyper-V *external* switch host vNIC carries the physical NIC's MAC: that is the real LAN.
+    ("vEthernet (External)", "Hyper-V Virtual Ethernet Adapter #2", "c8:7f:54:0b:29:14", False),
+    ("Ethernet", "Intel(R) Ethernet Controller I226-V", "c8:7f:54:0b:29:14", False),
+    ("Meta", "Meta Tunnel", None, False),  # tunnels are handled by IfType, not here
+])
+def test_host_virtual_kind(name: str, desc: str, mac: str | None, virtual: bool) -> None:
+    kind = _win.host_virtual_kind(name, desc, mac)
+    assert (kind is not None) == virtual
+    if virtual:
+        assert "inside this computer" in kind
+
+
+def test_auto_pick_skips_default_switch_tunnels_on_multi_adapter_pc() -> None:
+    """The Lierre-PC layout (validation doc): the External vSwitch is the LAN, even though it has a gateway."""
+    from bacnet_health.active.iface import _iface_from_dict, auto_pick
+
+    def row(name, desc, cidr, mac, if_type=6, gw=False, up=True):
+        net = ipaddress.ip_interface(cidr)
+        return {"name": name, "description": desc, "ip": str(net.ip), "prefix": net.network.prefixlen,
+                "netmask": str(net.netmask), "broadcast": str(net.network.broadcast_address), "is_up": up,
+                "is_loopback": False, "has_default_route": gw, "wireless_guess": if_type == 71, "mac": mac,
+                "if_type": if_type, "host_virtual": _win.host_virtual_kind(name, desc, mac)}
+
+    rows = [
+        row("Meta", "Meta Tunnel", "198.18.0.1/30", None, if_type=53, gw=True),
+        row("Tailscale", "Tailscale Tunnel", "100.100.1.2/32", None, if_type=53),
+        row("vEthernet (External)", "Hyper-V Virtual Ethernet Adapter #2", "192.168.2.100/23",
+            "c8:7f:54:0b:29:14", gw=True),
+        row("vEthernet (Default Switch)", "Hyper-V Virtual Ethernet Adapter", "172.19.64.1/20", "00:15:5d:04:41:f4"),
+        row("Wi-Fi", "Wi-Fi 6E", "169.254.252.105/16", "8c:b8:7e:ce:22:55", if_type=71, up=False),
+    ]
+    best, ranked, reasons = auto_pick([_iface_from_dict(r) for r in rows])
+    assert best is not None and best.name == "vEthernet (External)"
+    assert ranked.index(best) < [i.name for i in ranked].index("vEthernet (Default Switch)")
+    assert any("Default Switch" in r and "not a building network" in r for r in reasons)
+
+
+@on_windows
+def test_live_interfaces_carry_host_virtual() -> None:
+    for d in _win.list_interfaces_windows(include_extra=True):
+        assert "host_virtual" in d
+        assert d["host_virtual"] is None or isinstance(d["host_virtual"], str)
+
+
+# --- runner pre-flight uses the firewall verdict -----------------------------
+
+
+@on_windows
+@pytest.mark.parametrize(("verdict", "status"), [("allowed", "ok"), ("blocked", "error"), ("unknown", "unknown")])
+def test_preflight_maps_firewall_verdict(monkeypatch, verdict: str, status: str) -> None:
+    from bacnet_health import runner
+
+    seen = {}
+
+    def fake(program_path, port, **_):
+        seen["program"] = program_path
+        return {"verdict": verdict, "reasons": [f"canned {verdict}"]}
+
+    monkeypatch.setattr(_win, "firewall_inbound_status", fake)
+    checks = runner.preflight(runner.RunnerOptions(bind="127.0.0.1/8", port=47808, clock_synced=True))
+    fw = next(c for c in checks if c["name"] == "Windows Firewall")
+    assert fw["status"] == status
+    assert fw["message"] == f"canned {verdict}"
+    # Not frozen: the socket owner is the base interpreter, not the venv launcher.
+    assert seen["program"] == getattr(sys, "_base_executable", sys.executable)
