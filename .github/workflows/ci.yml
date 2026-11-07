@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, windows-platform]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install (core only, stdlib runtime)
+        run: python -m pip install -e ".[dev]"
+      - name: Core tests (no GUI)
+        run: python -m pytest -m "not gui"
+        env:
+          PYTHONUTF8: "1"
+
+  gui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Qt system libraries
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0 libgl1 libnss3 libasound2t64
+      - run: python -m pip install -e ".[dev,gui]"
+      - run: python -m pytest -m gui
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  pyz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: python scripts/build_pyz.py
+      - run: python dist/bacnet-health.pyz --version && python dist/bacnet-health.pyz demo --dir /tmp/demo
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bacnet-health-pyz
+          path: dist/bacnet-health.pyz

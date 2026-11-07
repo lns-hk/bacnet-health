@@ -77,5 +77,16 @@ def analyze_file(
     res.metrics["link_stats"] = dict(extractor.stats)
     for w in getattr(reader, "warnings", []):
         res.limitations.append(f"Capture file: {w}")
-    run.finished = utcnow_iso()
+    # The observation period is the capture itself, not the moment the file was analysed.
+    res.metrics["analysed_at"] = utcnow_iso()
+    if state.first_ts is not None and state.last_ts is not None:
+        run.started, run.finished = _iso(state.first_ts), _iso(state.last_ts)
+    else:
+        run.finished = utcnow_iso()
     return res
+
+
+def _iso(ts: float) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")

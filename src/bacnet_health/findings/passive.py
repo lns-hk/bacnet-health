@@ -41,6 +41,12 @@ def _top(counter: Counter, n: int = 5) -> str:
     return ", ".join(f"{k} ({v})" for k, v in counter.most_common(n)) or "none"
 
 
+def _reject_reason(code: Any) -> str:
+    from bacnet_health.wire.constants import RejectMessageReason, name_of
+
+    return "unknown reason" if code is None else name_of(RejectMessageReason, code)
+
+
 def build_metrics(state: PassiveState) -> dict[str, Any]:
     s = state
     peak, avg = _window_peak(s.bcast_per_sec, int(th("bcast_window_s")))
@@ -150,7 +156,7 @@ def evaluate_passive(
                 if s.duration >= 60 and n / max(s.duration, 1) * 10 > th("global_whois_per_source_per_10s")]
         if storm or busy:
             out.append(make_finding(
-                "BCAST-002", "Who-Is traffic", count=s.whois_total, window=w10, peak=wpeak,
+                "BCAST-002", "Who-Is traffic", count=round(wpeak * w10), window=w10, peak=wpeak,
                 sources=_top(s.whois_sources),
                 thresholds=used("whois_storm_pps", "whois_storm_window_s", "global_whois_per_source_per_10s"),
                 evidence=[_ev(f"{ip}: {n} Who-Is ({s.whois_global_sources.get(ip, 0)} global)")
@@ -256,10 +262,10 @@ def evaluate_passive(
         out.append(make_finding("COMM-004", "segmentation", count=sum(seg_aborts.values()),
                                 reasons=", ".join(f"{k} ({v})" for k, v in seg_aborts.items())))
     if allowed("COMM-005") and s.reject_to_network:
-        reasons = Counter(str(r.get("reason")) for r in s.reject_to_network)
+        reasons = Counter(_reject_reason(r.get("reason")) for r in s.reject_to_network)
         out.append(make_finding(
             "COMM-005", "routers", count=len(s.reject_to_network), reasons=_top(reasons),
-            evidence=[_ev(f"from {r['src']}: reason {r.get('reason')} for network {r.get('network')}", r["ts"],
+            evidence=[_ev(f"from {r['src']}: {_reject_reason(r.get('reason'))} for network {r.get('network')}", r["ts"],
                           r["frame"]) for r in s.reject_to_network[:10]],
         ))
     if allowed("COMM-006"):
