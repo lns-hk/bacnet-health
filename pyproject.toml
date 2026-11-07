@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bacnet-health"
+dynamic = ["version"]
+description = "Read-only, rate-limited BACnet/IP network health check with client-ready reports"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Lierre Wong" }]
+keywords = ["bacnet", "bms", "building-automation", "ot", "network", "pcap", "audit"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Networking :: Monitoring",
+]
+dependencies = []
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.6"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+bacnet-health = "bacnet_health.cli:main"
+
+[project.gui-scripts]
+bacnet-health-gui = "bacnet_health.gui.app:main"
+
+[project.urls]
+Homepage = "https://github.com/lns-hk/bacnet-health"
+
+[tool.setuptools.dynamic]
+version = { attr = "bacnet_health.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+bacnet_health = ["data/*.json", "report/assets/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "tshark: differential tests that need tshark on PATH",
+    "network: tests that open UDP sockets on localhost",
+    "gui: tests that need PySide6",
+]

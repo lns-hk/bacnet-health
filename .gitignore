@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+# Real captures never go into the repo (design §12). Synthetic test pcaps live under tests/data/.
+*.pcap
+*.pcapng
+*.pcap.gz
+!tests/data/**
+/out/
