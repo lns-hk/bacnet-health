@@ -17,6 +17,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any
 
+from bacnet_health._proc import run_hidden
+
 __all__ = [
     "EgressMismatch", "Iface", "auto_pick", "check_egress", "egress_interface", "has_default_route", "iface_from_cidr",
     "list_interfaces",
@@ -190,7 +192,7 @@ def _getifaddrs() -> list[tuple[str, int, str, str]]:
 
 def _run(cmd: list[str]) -> str:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=5, check=False).stdout
+        return run_hidden(cmd, capture_output=True, text=True, timeout=5, check=False).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
 

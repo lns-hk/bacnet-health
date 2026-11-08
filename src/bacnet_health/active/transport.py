@@ -37,6 +37,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
+from bacnet_health._proc import run_hidden
 from bacnet_health.active.iface import EgressMismatch, Iface, check_egress
 from bacnet_health.model import Budget
 from bacnet_health.wire.message import decode_message
@@ -145,7 +146,7 @@ def port_owners(port: int) -> list[str]:
         except Exception:  # noqa: BLE001 - optional helper; any failure means "unknown"
             return []
     try:
-        out = subprocess.run(["lsof", "-nP", f"-iUDP:{port}"], capture_output=True, text=True, timeout=3).stdout
+        out = run_hidden(["lsof", "-nP", f"-iUDP:{port}"], capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.SubprocessError):
         return []
     owners = []

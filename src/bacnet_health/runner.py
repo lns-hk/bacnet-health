@@ -15,6 +15,7 @@ import threading
 from dataclasses import dataclass, field, fields
 from typing import Any, Callable
 
+from bacnet_health._proc import run_hidden
 from bacnet_health.model import Budget, Result, utcnow_iso
 
 ProgressCb = Callable[[dict], None]
@@ -144,7 +145,7 @@ def clock_sync_state() -> tuple[bool | None, str]:
     try:
         if sys.platform == "win32":
             # '/query /source' prints just the source name, so this works on localised Windows too.
-            r = subprocess.run(["w32tm", "/query", "/source"], capture_output=True, text=True, timeout=5)
+            r = run_hidden(["w32tm", "/query", "/source"], capture_output=True, text=True, timeout=5)
             src = (r.stdout or "").strip()
             if r.returncode != 0 or not src:
                 return None, "Windows Time service state is unknown (it may be stopped until needed)."
@@ -152,11 +153,11 @@ def clock_sync_state() -> tuple[bool | None, str]:
                 return False, f"Windows Time source is '{src}', not a network time server."
             return True, f"Windows Time source: {src}."
         if sys.platform.startswith("linux") and shutil.which("timedatectl"):
-            out = subprocess.run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"], capture_output=True,
+            out = run_hidden(["timedatectl", "show", "-p", "NTPSynchronized", "--value"], capture_output=True,
                                  text=True, timeout=5).stdout.strip()
             return (out == "yes"), f"timedatectl NTPSynchronized={out or 'unknown'}"
         if sys.platform == "darwin":
-            out = subprocess.run(["/usr/bin/pgrep", "-x", "timed"], capture_output=True, text=True, timeout=5)
+            out = run_hidden(["/usr/bin/pgrep", "-x", "timed"], capture_output=True, text=True, timeout=5)
             if out.returncode == 0:
                 return None, "macOS time daemon is running, but sync state cannot be confirmed without admin rights."
     except (OSError, subprocess.SubprocessError):
